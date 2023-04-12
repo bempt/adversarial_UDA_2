@@ -3,11 +3,32 @@ Contains functions for training and testing a PyTorch model.
 """
 import torch
 
+import numpy as np
 from tqdm.auto import tqdm
 from typing import Dict, List, Tuple
 from torch.utils.tensorboard import SummaryWriter
 
 from modular.segmentation import metrics_segmentation
+
+'''
+https://stackoverflow.com/questions/71998978/early-stopping-in-pytorch
+'''
+class EarlyStopper:
+    def __init__(self, patience=1, min_delta=0):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.counter = 0
+        self.min_validation_loss = np.inf
+
+    def early_stop(self, validation_loss):
+        if validation_loss < self.min_validation_loss:
+            self.min_validation_loss = validation_loss
+            self.counter = 0
+        elif validation_loss > (self.min_validation_loss + self.min_delta):
+            self.counter += 1
+            if self.counter >= self.patience:
+                return True
+        return False
 
 def seg_train_step(model: torch.nn.Module, 
                dataloader: torch.utils.data.DataLoader, 
@@ -191,6 +212,8 @@ def train(model: torch.nn.Module,
                 "test_mIoU": []
     }
 
+    early_stopper = EarlyStopper(patience=3, min_delta=10)
+
     # Loop through training and testing steps for a number of epochs
     for epoch in range(epochs):
         train_loss, train_acc, train_mIoU = seg_train_step(model=model,
@@ -202,6 +225,9 @@ def train(model: torch.nn.Module,
                                           dataloader=val_dataloader,
                                           loss_fn=loss_fn,
                                           device=device)
+        if early_stopper.early_stop(test_loss):
+            print("Early stopping")
+            break
 
         # Print out what's happening
         print(
