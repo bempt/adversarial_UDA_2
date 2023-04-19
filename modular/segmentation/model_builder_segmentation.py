@@ -5,9 +5,11 @@ import torch
 from torch import nn 
 import torchvision
 
-import modular.utils_segmentation as utils_segmentation
+import modular.segmentation.utils_segmentation as utils_segmentation
+from modular.segmentation import data_setup_segmentation as seg_data
+import modular.utils
 
-device = utils_segmentation.set_device()
+device = modular.utils.set_device()
 
 class TinyVGG(nn.Module):
     """Creates the TinyVGG architecture.
@@ -60,6 +62,55 @@ class TinyVGG(nn.Module):
         return x
         # return self.classifier(self.block_2(self.block_1(x))) # <- leverage the benefits of operator fusion
 
+
+class Discriminator(nn.Module):
+    def __init__(self, in_channels=seg_data.N_CLASSES, out_channels=1, num_filters=64):
+        super(Discriminator, self).__init__()
+        self.layer1 = nn.Sequential(
+            nn.Conv2d(in_channels=in_channels, out_channels=num_filters, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(num_features=num_filters),
+            nn.LeakyReLU(negative_slope=0.2, inplace=True),
+        )
+        self.layer2 = nn.Sequential(
+            nn.Conv2d(in_channels=num_filters, out_channels=num_filters * 2, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(num_features=num_filters * 2),
+            nn.LeakyReLU(negative_slope=0.2, inplace=True),
+        )
+        self.layer3 = nn.Sequential(
+            nn.Conv2d(in_channels=num_filters * 2, out_channels=num_filters * 4, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(num_features=num_filters * 4),
+            nn.LeakyReLU(negative_slope=0.2, inplace=True),
+        )
+        self.layer4 = nn.Sequential(
+            nn.Conv2d(in_channels=num_filters * 4, out_channels=num_filters * 8, kernel_size=4, stride=2, padding=1),
+            nn.BatchNorm2d(num_features=num_filters * 8),
+            nn.LeakyReLU(negative_slope=0.2, inplace=True),
+        )
+        self.layer5 = nn.Sequential(
+            nn.Conv2d(in_channels=num_filters * 8, out_channels=out_channels, kernel_size=4, stride=2, padding=1),
+        )
+
+    def forward(self, x):
+        out = self.layer1(x)
+        out = self.layer2(out)
+        out = self.layer3(out)
+        out = self.layer4(out)
+        out = self.layer5(out)
+        out = out.view(out.size(0), -1)
+        out = torch.sigmoid(out)
+        return out.view(-1, 1)
+
+def create_discriminator():
+    # 1. Get the base model with pretrained weights and send to target device
+    model = Discriminator().to(device)
+
+    # 2. Set the seeds
+    modular.utils.set_seeds()
+
+    # 3. Give the model a name
+    model.name = "discriminator"
+    print(f"[INFO] Created new {model.name} model.")
+    return model
 
 # Create an EffNetB0 feature extractor
 def create_effnetb0(out_features):
