@@ -4,7 +4,7 @@ Contains functions for training and testing a PyTorch model.
 import torch
 
 import numpy as np
-from tqdm.auto import tqdm
+from tqdm import tqdm
 from typing import Dict, List, Tuple
 from torch.utils.tensorboard import SummaryWriter
 
@@ -29,6 +29,79 @@ class EarlyStopper:
             if self.counter >= self.patience:
                 return True
         return False
+    
+def print_epoch_results(epoch, train_loss, train_acc, train_mIoU, test_loss, test_acc, test_mIoU):
+    """
+    Prints the results of an epoch.
+    
+    Parameters:
+        epoch (int): The current epoch number.
+        train_loss (float): The training loss.
+        train_acc (float): The training accuracy.
+        train_mIoU (float): The training mean Intersection over Union (mIoU).
+        test_loss (float): The testing loss.
+        test_acc (float): The testing accuracy.
+        test_mIoU (float): The testing mean Intersection over Union (mIoU).
+    """
+    print(
+        f"Epoch: {epoch+1} | "
+        f"train_loss: {train_loss:.4f} | "
+        f"train_acc: {train_acc:.4f} | "
+        f"train_mIoU: {train_mIoU:.4f} | "
+        f"test_loss: {test_loss:.4f} | "
+        f"test_acc: {test_acc:.4f} | "
+        f"test_mIoU: {test_mIoU:.4f}"
+    )
+
+def update_results(results, train_loss, train_acc, train_mIoU, test_loss, test_acc, test_mIoU):
+    """Updates a dictionary of results with training and testing metrics for an epoch.
+
+    Args:
+      results: A dictionary of training and testing loss as well as training and
+        testing accuracy metrics. Each metric has a value in a list for 
+        each epoch.
+        In the form: {train_loss: [...],
+                  train_acc: [...],
+                  train_mIoU: [...],
+                  test_loss: [...],
+                  test_acc: [...],
+                  test_mIoU: [...]} 
+      train_loss: A float indicating the training loss for the current epoch.
+      train_acc: A float indicating the training accuracy for the current epoch.
+      train_mIoU: A float indicating the training mIoU for the current epoch.
+      test_loss: A float indicating the testing loss for the current epoch.
+      test_acc: A float indicating the testing accuracy for the current epoch.
+      test_mIoU: A float indicating the testing mIoU for the current epoch.
+
+    Returns:
+      None. The results dictionary is updated in place.
+    """
+    results["train_loss"].append(train_loss)
+    results["train_acc"].append(train_acc)
+    results["train_mIoU"].append(train_mIoU)
+    results["test_loss"].append(test_loss)
+    results["test_acc"].append(test_acc)
+    results["test_mIoU"].append(test_mIoU)
+
+def update_writer(train_loss, train_acc, train_mIoU, test_loss, test_acc, test_mIoU, writer=None, epoch=None):
+    # See if there's a writer, if so, log to it
+    if writer and epoch is not None:
+        # Add results to SummaryWriter
+        writer.add_scalars(main_tag="Loss", 
+                           tag_scalar_dict={"train_loss": train_loss,
+                                            "test_loss": test_loss},
+                           global_step=epoch)
+        writer.add_scalars(main_tag="Accuracy", 
+                           tag_scalar_dict={"train_acc": train_acc,
+                                            "test_acc": test_acc}, 
+                           global_step=epoch)
+        writer.add_scalars(main_tag="mIoU", 
+                           tag_scalar_dict={"train_mIoU": train_mIoU,
+                                            "test_mIoU": test_mIoU}, 
+                           global_step=epoch)
+
+        # Close the writer
+        writer.close()
 
 def seg_train_step(model: torch.nn.Module, 
                dataloader: torch.utils.data.DataLoader, 
@@ -230,46 +303,16 @@ def train(model: torch.nn.Module,
             break
 
         # Print out what's happening
-        print(
-          f"Epoch: {epoch+1} | "
-          f"train_loss: {train_loss:.4f} | "
-          f"train_acc: {train_acc:.4f} | "
-          f"train_mIoU: {train_mIoU:.4f} | "
-          f"test_loss: {test_loss:.4f} | "
-          f"test_acc: {test_acc:.4f} | "
-          f"test_mIoU: {test_mIoU:.4f}"
-        )
+        print_epoch_results(epoch, train_loss, train_acc, train_mIoU, test_loss, test_acc, test_mIoU)
 
         # Update results dictionary
-        results["train_loss"].append(train_loss)
-        results["train_acc"].append(train_acc)
-        results["train_mIoU"].append(train_mIoU)
-        results["test_loss"].append(test_loss)
-        results["test_acc"].append(test_acc)
-        results["test_mIoU"].append(test_mIoU)
-
+        update_results(results, train_loss, train_acc, train_mIoU, test_loss, test_acc, test_mIoU)
 
         ### New: Use the writer parameter to track experiments ###
         # See if there's a writer, if so, log to it
-        if writer:
-            # Add results to SummaryWriter
-            writer.add_scalars(main_tag="Loss", 
-                               tag_scalar_dict={"train_loss": train_loss,
-                                                "test_loss": test_loss},
-                               global_step=epoch)
-            writer.add_scalars(main_tag="Accuracy", 
-                               tag_scalar_dict={"train_acc": train_acc,
-                                                "test_acc": test_acc}, 
-                               global_step=epoch)
-            writer.add_scalars(main_tag="mIoU", 
-                               tag_scalar_dict={"train_mIoU": train_mIoU,
-                                                "test_mIoU": test_mIoU}, 
-                               global_step=epoch)
+        update_writer(results, train_loss, train_acc, train_mIoU, test_loss, test_acc, test_mIoU, writer=None, epoch=None)
 
-            # Close the writer
-            writer.close()
-        else:
-            pass
+
     ### End new ###
 
     # Return the filled results at the end of the epochs
