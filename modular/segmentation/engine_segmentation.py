@@ -9,6 +9,7 @@ from typing import Dict, List, Tuple
 from torch.utils.tensorboard import SummaryWriter
 
 from modular.segmentation import metrics_segmentation
+from modular.utils import save_model
 
 '''
 https://stackoverflow.com/questions/71998978/early-stopping-in-pytorch
@@ -240,7 +241,9 @@ def train(model: torch.nn.Module,
           loss_fn: torch.nn.Module,
           epochs: int,
           device: torch.device, 
-          writer: torch.utils.tensorboard.writer.SummaryWriter # new parameter to take in a writer
+          writer: torch.utils.tensorboard.writer.SummaryWriter, # new parameter to take in a writer
+          target_dir: str,
+          model_name: str
           ) -> Dict[str, List]:
     """Trains and tests a PyTorch model.
 
@@ -312,6 +315,7 @@ def train(model: torch.nn.Module,
         # See if there's a writer, if so, log to it
         update_writer(results, train_loss, train_acc, train_mIoU, test_loss, test_acc, test_mIoU, writer=None, epoch=None)
 
+        save_model(model, target_dir, model_name)
 
     ### End new ###
 
