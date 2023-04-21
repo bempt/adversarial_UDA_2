@@ -313,7 +313,7 @@ def train(model: torch.nn.Module,
 
         ### New: Use the writer parameter to track experiments ###
         # See if there's a writer, if so, log to it
-        update_writer(results, train_loss, train_acc, train_mIoU, test_loss, test_acc, test_mIoU, writer, epoch=None)
+        update_writer(results, train_loss, train_acc, train_mIoU, test_loss, test_acc, test_mIoU, writer, epoch)
 
         save_model(model, target_dir, model_name)
 
