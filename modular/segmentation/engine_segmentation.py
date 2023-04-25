@@ -7,9 +7,11 @@ import numpy as np
 from tqdm import tqdm
 from typing import Dict, List, Tuple
 from torch.utils.tensorboard import SummaryWriter
+import torch.nn.functional as F
 
 from modular.segmentation import metrics_segmentation
 from modular.utils import save_model
+import modular.segmentation.data_setup_segmentation as seg_data
 
 '''
 https://stackoverflow.com/questions/71998978/early-stopping-in-pytorch
@@ -355,7 +357,7 @@ def adv_train_step(seg_model: torch.nn.Module,
 
         image = image_tiles.to(device); mask = mask_tiles.to(device);
 
-        mask_onehot = F.one_hot(mask, num_classes=n_classes).permute(0, 3, 1, 2).float()
+        mask_onehot = F.one_hot(mask, num_classes=seg_data.n_classes).permute(0, 3, 1, 2).float()
         mask_onehot = mask_onehot.to(device)
 
         ################################
