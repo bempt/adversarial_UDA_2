@@ -104,10 +104,10 @@ def update_writer(train_loss, train_acc, train_mIoU, test_loss, test_acc, test_m
         # Close the writer
         writer.close()
 
-def seg_train_step(model: torch.nn.Module, 
+def seg_train_step(seg_model: torch.nn.Module, 
                dataloader: torch.utils.data.DataLoader, 
-               loss_fn: torch.nn.Module, 
-               optimizer: torch.optim.Optimizer,
+               seg_loss_fn: torch.nn.Module, 
+               seg_optimizer: torch.optim.Optimizer,
                device: torch.device) -> Tuple[float, float]:
     """Trains a PyTorch model for a single epoch.
 
@@ -118,7 +118,7 @@ def seg_train_step(model: torch.nn.Module,
     Args:
     model: A PyTorch model to be trained.
     dataloader: A DataLoader instance for the model to be trained on.
-    loss_fn: A PyTorch loss function to minimize.
+    seg_loss_fn: A PyTorch loss function to minimize.
     optimizer: A PyTorch optimizer to help minimize the loss function.
     device: A target device to compute on (e.g. "cuda" or "cpu").
 
@@ -129,7 +129,7 @@ def seg_train_step(model: torch.nn.Module,
     (0.1112, 0.8743)
     """
     # Put model in train mode
-    model.train()
+    seg_model.train()
 
     # Setup train loss and train accuracy values
     train_loss, train_acc, train_mIoU = 0, 0, 0
@@ -149,20 +149,20 @@ def seg_train_step(model: torch.nn.Module,
       image = image_tiles.to(device); mask = mask_tiles.to(device);
 
       # 1. Forward pass
-      output = model(image)
+      output = seg_model(image)
 
       # 2. Calculate  and accumulate loss
-      loss = loss_fn(output, mask)
+      loss = seg_loss_fn(output, mask)
       train_loss += loss.item() 
 
       # 3. Optimizer zero grad
-      optimizer.zero_grad()
+      seg_optimizer.zero_grad()
 
       # 4. Loss backward
       loss.backward()
 
       # 5. Optimizer step
-      optimizer.step()
+      seg_optimizer.step()
 
       # Calculate and accumulate metrics across all batches
       train_acc += metrics_segmentation.pixel_accuracy(output, mask)
@@ -172,11 +172,12 @@ def seg_train_step(model: torch.nn.Module,
     train_loss = train_loss / len(dataloader)
     train_acc = train_acc / len(dataloader)
     train_mIoU = train_mIoU / len(dataloader)
+
     return train_loss, train_acc, train_mIoU
 
-def seg_test_step(model: torch.nn.Module, 
+def seg_test_step(seg_model: torch.nn.Module, 
               dataloader: torch.utils.data.DataLoader, 
-              loss_fn: torch.nn.Module,
+              seg_loss_fn: torch.nn.Module,
               device: torch.device) -> Tuple[float, float]:
     """Tests a PyTorch model for a single epoch.
 
@@ -186,7 +187,7 @@ def seg_test_step(model: torch.nn.Module,
     Args:
     model: A PyTorch model to be tested.
     dataloader: A DataLoader instance for the model to be tested on.
-    loss_fn: A PyTorch loss function to calculate loss on the test data.
+    seg_loss_fn: A PyTorch loss function to calculate loss on the test data.
     device: A target device to compute on (e.g. "cuda" or "cpu").
 
     Returns:
@@ -196,7 +197,7 @@ def seg_test_step(model: torch.nn.Module,
     (0.0223, 0.8985)
     """
     # Put model in eval mode
-    model.eval() 
+    seg_model.eval() 
 
     # Setup test loss and test accuracy values
     test_loss, test_acc, test_mIoU = 0, 0, 0
@@ -218,10 +219,10 @@ def seg_test_step(model: torch.nn.Module,
             image = image_tiles.to(device); mask = mask_tiles.to(device);
 
             # 1. Forward pass
-            output = model(image)
+            output = seg_model(image)
 
             # 2. Calculate and accumulate loss
-            loss = loss_fn(output, mask)  
+            loss = seg_loss_fn(output, mask)  
             test_loss += loss.item()
 
             # Calculate and accumulate metrics
@@ -234,16 +235,16 @@ def seg_test_step(model: torch.nn.Module,
     test_mIoU = test_mIoU / len(dataloader)
     return test_loss, test_acc, test_mIoU
 
-def train(model: torch.nn.Module, 
+def seg_train(seg_model: torch.nn.Module, 
           train_dataloader: torch.utils.data.DataLoader, 
           val_dataloader: torch.utils.data.DataLoader, 
-          optimizer: torch.optim.Optimizer,
-          loss_fn: torch.nn.Module,
+          seg_optimizer: torch.optim.Optimizer,
+          seg_loss_fn: torch.nn.Module,
           epochs: int,
           device: torch.device, 
           writer: torch.utils.tensorboard.writer.SummaryWriter, # new parameter to take in a writer
           target_dir: str,
-          model_name: str
+          seg_model_name: str
           ) -> Dict[str, List]:
     """Trains and tests a PyTorch model.
 
@@ -260,7 +261,7 @@ def train(model: torch.nn.Module,
       train_dataloader: A DataLoader instance for the model to be trained on.
       val_dataloader: A DataLoader instance for the model to be tested on.
       optimizer: A PyTorch optimizer to help minimize the loss function.
-      loss_fn: A PyTorch loss function to calculate loss on both datasets.
+      seg_loss_fn: A PyTorch loss function to calculate loss on both datasets.
       epochs: An integer indicating how many epochs to train for.
       device: A target device to compute on (e.g. "cuda" or "cpu").
       writer: A SummaryWriter() instance to log model results to.
@@ -292,14 +293,14 @@ def train(model: torch.nn.Module,
 
     # Loop through training and testing steps for a number of epochs
     for epoch in range(epochs):
-        train_loss, train_acc, train_mIoU = seg_train_step(model=model,
+        train_loss, train_acc, train_mIoU = seg_train_step(seg_model=seg_model,
                                           dataloader=train_dataloader,
-                                          loss_fn=loss_fn,
-                                          optimizer=optimizer,
+                                          seg_loss_fn=seg_loss_fn,
+                                          seg_optimizer=seg_optimizer,
                                           device=device)
-        test_loss, test_acc, test_mIoU = seg_test_step(model=model,
+        test_loss, test_acc, test_mIoU = seg_test_step(seg_model=seg_model,
                                           dataloader=val_dataloader,
-                                          loss_fn=loss_fn,
+                                          seg_loss_fn=seg_loss_fn,
                                           device=device)
         if early_stopper.early_stop(test_loss):
             print("Early stopping")
@@ -315,9 +316,105 @@ def train(model: torch.nn.Module,
         # See if there's a writer, if so, log to it
         update_writer(train_loss, train_acc, train_mIoU, test_loss, test_acc, test_mIoU, writer, epoch)
 
-        save_model(model, target_dir, model_name)
+        save_model(seg_model, target_dir, seg_model_name)
 
     ### End new ###
 
     # Return the filled results at the end of the epochs
     return results
+
+
+def adv_train_step(seg_model: torch.nn.Module, 
+                   disc_model: torch.nn.Module,
+               dataloader: torch.utils.data.DataLoader, 
+               seg_loss_fn: torch.nn.Module, 
+               disc_loss_fn: torch.nn.Module,
+               seg_optimizer: torch.optim.Optimizer,
+               disc_optimizer: torch.optim.Optimizer,
+               device: torch.device) -> Tuple[float, float]:
+    
+    # Put model in train mode
+    seg_model.train()
+    disc_model.train()
+
+    # Setup train loss and train accuracy values
+    seg_train_loss, seg_train_acc, seg_train_mIoU = 0, 0, 0
+    disc_train_loss, disc_train_acc = 0, 0
+
+    # Loop through data loader data batches
+    for i, data in enumerate(tqdm(dataloader)):
+
+        # Send data to target device
+        image_tiles, mask_tiles = data
+
+        # if patch:
+        #     bs, n_tiles, c, h, w = image_tiles.size()
+
+        #     image_tiles = image_tiles.view(-1,c, h, w)
+        #     mask_tiles = mask_tiles.view(-1, h, w)
+
+        image = image_tiles.to(device); mask = mask_tiles.to(device);
+
+        mask_onehot = F.one_hot(mask, num_classes=n_classes).permute(0, 3, 1, 2).float()
+        mask_onehot = mask_onehot.to(device)
+
+        ################################
+        # Discriminator training phase #
+        ################################
+
+        # segmentation model gradients are turned off
+        for param in seg_model.parameters():
+            param.requires_grad = False
+        for param in disc_model.parameters():
+            param.requires_grad = True
+
+
+        ###############################
+        # Segmentation training phase #
+        ###############################
+
+        # turn off discriminator gradients
+        for param in seg_model.parameters():
+            param.requires_grad = True
+        for param in disc_model.parameters():
+            param.requires_grad = False
+
+        # 1. Forward pass
+        seg_output = seg_model(image)
+        disc_output = disc_model(seg_output)
+
+        # batch labels (source=0, target=1), same size as output_D
+        domain_labels = torch.ones(disc_output.size(0), 1).to(device)
+
+        # 2. Calculate  and accumulate loss
+        seg_loss = seg_loss_fn(seg_output, mask)
+        disc_loss = disc_loss_fn(disc_output, domain_labels)
+        total_seg_loss = seg_loss + disc_loss
+
+        seg_train_loss += total_seg_loss.item() 
+
+        # 3. Optimizer zero grad
+        seg_optimizer.zero_grad()
+
+        # 4. Loss backward
+        total_seg_loss.backward()
+
+        # 5. Optimizer step
+        seg_optimizer.step()
+
+        # Calculate and accumulate metrics across all batches
+        seg_train_acc += metrics_segmentation.pixel_accuracy(seg_output, mask)
+        seg_train_mIoU += metrics_segmentation.mIoU(seg_output, mask)
+
+    # make sure gradients are turned on for both models
+    for param in seg_model.parameters():
+        param.requires_grad = True
+    for param in disc_model.parameters():
+        param.requires_grad = True
+    
+    # Adjust metrics to get average loss and accuracy per batch 
+    seg_train_loss = seg_train_loss / len(dataloader)
+    seg_train_acc = seg_train_acc / len(dataloader)
+    seg_train_mIoU = seg_train_mIoU / len(dataloader)
+
+    return seg_train_loss, seg_train_acc, seg_train_mIoU
