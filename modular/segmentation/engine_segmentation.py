@@ -17,6 +17,13 @@ import modular.segmentation.data_setup_segmentation as seg_data
 https://stackoverflow.com/questions/71998978/early-stopping-in-pytorch
 '''
 class EarlyStopper:
+    '''
+    Early stops the training if validation loss doesn't improve after a given patience.
+
+    Parameters:
+        patience (int): How long to wait after last time validation loss improved.
+        min_delta (float): Minimum change in the monitored quantity to qualify as an improvement.
+    '''
     def __init__(self, patience=1, min_delta=0):
         self.patience = patience
         self.min_delta = min_delta
@@ -33,7 +40,7 @@ class EarlyStopper:
                 return True
         return False
     
-def print_epoch_results(epoch, train_loss, train_acc, train_mIoU, test_loss, test_acc, test_mIoU):
+def seg_print_epoch_results(epoch, train_loss, train_acc, train_mIoU, test_loss, test_acc, test_mIoU):
     """
     Prints the results of an epoch.
     
@@ -48,15 +55,15 @@ def print_epoch_results(epoch, train_loss, train_acc, train_mIoU, test_loss, tes
     """
     print(
         f"Epoch: {epoch+1} | "
-        f"train_loss: {train_loss:.4f} | "
-        f"train_acc: {train_acc:.4f} | "
-        f"train_mIoU: {train_mIoU:.4f} | "
-        f"test_loss: {test_loss:.4f} | "
-        f"test_acc: {test_acc:.4f} | "
-        f"test_mIoU: {test_mIoU:.4f}"
+        f"seg_train_loss: {train_loss:.4f} | "
+        f"seg_train_acc: {train_acc:.4f} | "
+        f"seg_train_mIoU: {train_mIoU:.4f} | "
+        f"seg_test_loss: {test_loss:.4f} | "
+        f"seg_test_acc: {test_acc:.4f} | "
+        f"seg_test_mIoU: {test_mIoU:.4f}"
     )
 
-def update_results(results, train_loss, train_acc, train_mIoU, test_loss, test_acc, test_mIoU):
+def seg_update_results(results, train_loss, train_acc, train_mIoU, test_loss, test_acc, test_mIoU):
     """Updates a dictionary of results with training and testing metrics for an epoch.
 
     Args:
@@ -86,7 +93,7 @@ def update_results(results, train_loss, train_acc, train_mIoU, test_loss, test_a
     results["test_acc"].append(test_acc)
     results["test_mIoU"].append(test_mIoU)
 
-def update_writer(train_loss, train_acc, train_mIoU, test_loss, test_acc, test_mIoU, writer=None, epoch=None):
+def seg_update_writer(train_loss, train_acc, train_mIoU, test_loss, test_acc, test_mIoU, writer=None, epoch=None):
     # See if there's a writer, if so, log to it
     if writer and epoch is not None:
         # Add results to SummaryWriter
@@ -309,14 +316,14 @@ def seg_train(seg_model: torch.nn.Module,
             break
 
         # Print out what's happening
-        print_epoch_results(epoch, train_loss, train_acc, train_mIoU, test_loss, test_acc, test_mIoU)
+        seg_print_epoch_results(epoch, train_loss, train_acc, train_mIoU, test_loss, test_acc, test_mIoU)
 
         # Update results dictionary
-        update_results(results, train_loss, train_acc, train_mIoU, test_loss, test_acc, test_mIoU)
+        seg_update_results(results, train_loss, train_acc, train_mIoU, test_loss, test_acc, test_mIoU)
 
         ### New: Use the writer parameter to track experiments ###
         # See if there's a writer, if so, log to it
-        update_writer(train_loss, train_acc, train_mIoU, test_loss, test_acc, test_mIoU, writer, epoch)
+        seg_update_writer(train_loss, train_acc, train_mIoU, test_loss, test_acc, test_mIoU, writer, epoch)
 
         save_model(seg_model, target_dir, seg_model_name)
 
@@ -324,6 +331,24 @@ def seg_train(seg_model: torch.nn.Module,
 
     # Return the filled results at the end of the epochs
     return results
+
+def adv_forward_pass(seg_model: torch.nn.Module,
+                        disc_model: torch.nn.Module,
+                        image: torch.Tensor,
+                        mask_onehot: torch.Tensor,
+                        device: torch.device):
+    seg_output = seg_model(image)
+    disc_output_real = disc_model(mask_onehot)
+    disc_output_fake = disc_model(seg_output)
+
+    # Concatenate real and fake outputs and domain labels
+    disc_output = torch.cat((disc_output_real, disc_output_fake), dim=0)
+
+    # Batch labels (source=0, target=1), same size as output_D
+    domain_labels_real = torch.ones(disc_output_real.size(0), 1).to(device)
+    domain_labels_fake = torch.zeros(disc_output_fake.size(0), 1).to(device)
+    domain_labels = torch.cat((domain_labels_real, domain_labels_fake), dim=0)
+    return disc_output_real, disc_output_fake, disc_output
 
 
 def adv_train_step(seg_model: torch.nn.Module, 
@@ -355,6 +380,8 @@ def adv_train_step(seg_model: torch.nn.Module,
         #     image_tiles = image_tiles.view(-1,c, h, w)
         #     mask_tiles = mask_tiles.view(-1, h, w)
 
+        batch_size = image_tiles.size(0)
+
         image = image_tiles.to(device); mask = mask_tiles.to(device);
 
         mask_onehot = F.one_hot(mask, num_classes=seg_data.n_classes).permute(0, 3, 1, 2).float()
@@ -371,17 +398,7 @@ def adv_train_step(seg_model: torch.nn.Module,
             param.requires_grad = True
 
         # 1. Forward pass
-        seg_output = seg_model(image)
-        disc_output_real = disc_model(mask_onehot)
-        disc_output_fake = disc_model(seg_output)
-
-        # Concatenate real and fake outputs and domain labels
-        disc_output = torch.cat((disc_output_real, disc_output_fake), dim=0)
-
-        # Batch labels (source=0, target=1), same size as output_D
-        domain_labels_real = torch.zeros(disc_output_real.size(0), 1).to(device)
-        domain_labels_fake = torch.ones(disc_output_fake.size(0), 1).to(device)
-        domain_labels = torch.cat((domain_labels_real, domain_labels_fake), dim=0)
+        seg_output, disc_output_real, disc_output_fake, disc_output = adv_forward_pass(seg_model, disc_model, image, mask_onehot, device)
 
         # 2. Calculate  and accumulate loss
         disc_loss = disc_loss_fn(disc_output, domain_labels) # domain classification loss
@@ -396,6 +413,7 @@ def adv_train_step(seg_model: torch.nn.Module,
         # 5. Optimizer step
         disc_optimizer.step()
 
+        disc_train_acc += metrics_segmentation.disc_accuracy(disc_output_real, disc_output_fake, batch_size)
 
         ###############################
         # Segmentation training phase #
@@ -446,3 +464,69 @@ def adv_train_step(seg_model: torch.nn.Module,
     seg_train_mIoU = seg_train_mIoU / len(dataloader)
 
     return seg_train_loss, seg_train_acc, seg_train_mIoU
+
+
+def adv_test_step(seg_model: torch.nn.Module, 
+                disc_model: torch.nn.Module,
+              dataloader: torch.utils.data.DataLoader, 
+              seg_loss_fn: torch.nn.Module,
+              device: torch.device) -> Tuple[float, float]:
+    """Tests a PyTorch model for a single epoch.
+
+    Turns a target PyTorch model to "eval" mode and then performs
+    a forward pass on a testing dataset.
+
+    Args:
+    model: A PyTorch model to be tested.
+    dataloader: A DataLoader instance for the model to be tested on.
+    seg_loss_fn: A PyTorch loss function to calculate loss on the test data.
+    device: A target device to compute on (e.g. "cuda" or "cpu").
+
+    Returns:
+    A tuple of testing loss and testing accuracy metrics.
+    In the form (test_loss, test_accuracy). For example:
+
+    (0.0223, 0.8985)
+    """
+    # Put model in eval mode
+    seg_model.eval() 
+    disc_model.eval()
+
+    # Setup test loss and test accuracy values
+    seg_test_loss, seg_test_acc, seg_test_mIoU = 0, 0, 0
+    disc_test_loss, disc_test_acc = 0, 0
+
+
+    # Turn on inference context manager
+    with torch.inference_mode():
+        # Loop through DataLoader batches
+        for i, data in enumerate(tqdm(dataloader)):
+            
+            # Send data to target device
+            image_tiles, mask_tiles = data
+
+            # if patch:
+            #         bs, n_tiles, c, h, w = image_tiles.size()
+
+            #         image_tiles = image_tiles.view(-1,c, h, w)
+            #         mask_tiles = mask_tiles.view(-1, h, w)
+
+            image = image_tiles.to(device); mask = mask_tiles.to(device);
+
+            # 1. Forward pass
+            seg_output = seg_model(image)
+            # ADD ADV_FORWARD_PASS HERE
+
+            # 2. Calculate and accumulate loss
+            loss = seg_loss_fn(seg_output, mask)  
+            seg_test_loss += loss.item()
+
+            # Calculate and accumulate metrics
+            seg_test_acc += metrics_segmentation.pixel_accuracy(seg_output, mask)
+            seg_test_mIoU += metrics_segmentation.mIoU(seg_output, mask)
+
+    # Adjust metrics to get average loss and accuracy per batch 
+    seg_test_loss = seg_test_loss / len(dataloader)
+    seg_test_acc = seg_test_acc / len(dataloader)
+    seg_test_mIoU = seg_test_mIoU / len(dataloader)
+    return seg_test_loss, seg_test_acc, seg_test_mIoU

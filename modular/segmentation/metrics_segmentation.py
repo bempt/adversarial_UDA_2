@@ -31,3 +31,10 @@ def mIoU(pred_mask, mask, smooth=1e-10, n_classes=23):
                 iou = (intersect + smooth) / (union +smooth)
                 iou_per_class.append(iou)
         return np.nanmean(iou_per_class)
+    
+def disc_accuracy(output_D_real, output_D_fake, batch_size):
+    pred_D_real = (output_D_real > 0.5).float().squeeze()
+    pred_D_fake = (output_D_fake < 0.5).float().squeeze()
+    correct_D_real = (pred_D_real == 1).sum().item()
+    correct_D_fake = (pred_D_fake == 1).sum().item()
+    return (correct_D_real + correct_D_fake) / (batch_size * 2)
