@@ -370,6 +370,32 @@ def adv_train_step(seg_model: torch.nn.Module,
         for param in disc_model.parameters():
             param.requires_grad = True
 
+        # 1. Forward pass
+        seg_output = seg_model(image)
+        disc_output_real = disc_model(mask_onehot)
+        disc_output_fake = disc_model(seg_output)
+
+        # Concatenate real and fake outputs and domain labels
+        disc_output = torch.cat((disc_output_real, disc_output_fake), dim=0)
+
+        # Batch labels (source=0, target=1), same size as output_D
+        domain_labels_real = torch.zeros(disc_output_real.size(0), 1).to(device)
+        domain_labels_fake = torch.ones(disc_output_fake.size(0), 1).to(device)
+        domain_labels = torch.cat((domain_labels_real, domain_labels_fake), dim=0)
+
+        # 2. Calculate  and accumulate loss
+        disc_loss = disc_loss_fn(disc_output, domain_labels) # domain classification loss
+        disc_train_loss += disc_loss.item()
+
+        # 3. Optimizer zero grad
+        disc_optimizer.zero_grad()
+
+        # 4. Loss backward
+        disc_loss.backward()
+
+        # 5. Optimizer step
+        disc_optimizer.step()
+
 
         ###############################
         # Segmentation training phase #
