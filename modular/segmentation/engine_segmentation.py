@@ -23,7 +23,7 @@ class EarlyStopping:
         self.best_model = None
         self.best_loss = None
         self.counter = 0
-        self.status
+        self.status = ""
 
     def __call__(self, model, val_loss):
         if self.best_loss == None:
@@ -42,9 +42,9 @@ class EarlyStopping:
                 return True
         self.status = f"{self.counter}/{self.patience}"
         return False
-
     
-def seg_print_epoch_results(epoch, train_loss, train_acc, train_mIoU, val_loss, val_acc, val_mIoU):
+
+def seg_update_results(epoch, results, train_loss, train_acc, train_mIoU, val_loss, val_acc, val_mIoU):
     print(
         f"Epoch: {epoch+1} | "
         f"seg_train_loss: {train_loss:.4f} | "
@@ -55,13 +55,14 @@ def seg_print_epoch_results(epoch, train_loss, train_acc, train_mIoU, val_loss, 
         f"seg_val_mIoU: {val_mIoU:.4f}"
     )
 
-def seg_update_results(results, train_loss, train_acc, train_mIoU, val_loss, val_acc, val_mIoU):
     results["seg_train_loss"].append(train_loss)
     results["seg_train_acc"].append(train_acc)
     results["seg_train_mIoU"].append(train_mIoU)
     results["seg_val_loss"].append(val_loss)
     results["seg_val_acc"].append(val_acc)
     results["seg_val_mIoU"].append(val_mIoU)
+
+    
 
 def seg_update_writer(train_loss, train_acc, train_mIoU, val_loss, val_acc, val_mIoU, writer=None, epoch=None):
     # See if there's a writer, if so, log to it
@@ -219,10 +220,7 @@ def seg_train(seg_model: torch.nn.Module,
             
             if es(seg_model, val_loss): done = True
 
-            # Print out what's happening
-            seg_print_epoch_results(epoch, train_loss, train_acc, train_mIoU, val_loss, val_acc, val_mIoU)
-
-            # Update results dictionary
+            # Update results dictionary and print what's happening
             seg_update_results(results, train_loss, train_acc, train_mIoU, val_loss, val_acc, val_mIoU)
 
             ### New: Use the writer parameter to track experiments ###
