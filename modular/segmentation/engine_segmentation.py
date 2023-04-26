@@ -44,41 +44,41 @@ class EarlyStopping:
         return False
     
 
-def seg_update_results(epoch, results, train_loss, train_acc, train_mIoU, val_loss, val_acc, val_mIoU):
+def seg_update_results(epoch, results, seg_train_loss, seg_train_acc, seg_train_mIoU, seg_val_loss, seg_val_acc, seg_val_mIoU):
     print(
         f"Epoch: {epoch+1} | "
-        f"seg_train_loss: {train_loss:.4f} | "
-        f"seg_train_acc: {train_acc:.4f} | "
-        f"seg_train_mIoU: {train_mIoU:.4f} | "
-        f"seg_val_loss: {val_loss:.4f} | "
-        f"seg_val_acc: {val_acc:.4f} | "
-        f"seg_val_mIoU: {val_mIoU:.4f}"
+        f"seg_train_loss: {seg_train_loss:.4f} | "
+        f"seg_train_acc: {seg_train_acc:.4f} | "
+        f"seg_train_mIoU: {seg_train_mIoU:.4f} | "
+        f"seg_val_loss: {seg_val_loss:.4f} | "
+        f"seg_val_acc: {seg_val_acc:.4f} | "
+        f"seg_val_mIoU: {seg_val_mIoU:.4f}"
     )
 
-    results["seg_train_loss"].append(train_loss)
-    results["seg_train_acc"].append(train_acc)
-    results["seg_train_mIoU"].append(train_mIoU)
-    results["seg_val_loss"].append(val_loss)
-    results["seg_val_acc"].append(val_acc)
-    results["seg_val_mIoU"].append(val_mIoU)
+    results["seg_train_loss"].append(seg_train_loss)
+    results["seg_train_acc"].append(seg_train_acc)
+    results["seg_train_mIoU"].append(seg_train_mIoU)
+    results["seg_val_loss"].append(seg_val_loss)
+    results["seg_val_acc"].append(seg_val_acc)
+    results["seg_val_mIoU"].append(seg_val_mIoU)
 
     
 
-def seg_update_writer(train_loss, train_acc, train_mIoU, val_loss, val_acc, val_mIoU, writer=None, epoch=None):
+def seg_update_writer(seg_train_loss, seg_train_acc, seg_train_mIoU, seg_val_loss, seg_val_acc, seg_val_mIoU, writer=None, epoch=None):
     # See if there's a writer, if so, log to it
     if writer and epoch is not None:
         # Add results to SummaryWriter
         writer.add_scalars(main_tag="Loss", 
-                           tag_scalar_dict={"seg_train_loss": train_loss,
-                                            "seg_val_loss": val_loss},
+                           tag_scalar_dict={"seg_train_loss": seg_train_loss,
+                                            "seg_val_loss": seg_val_loss},
                            global_step=epoch)
         writer.add_scalars(main_tag="Accuracy", 
-                           tag_scalar_dict={"seg_train_acc": train_acc,
-                                            "seg_val_acc": val_acc}, 
+                           tag_scalar_dict={"seg_train_acc": seg_train_acc,
+                                            "seg_val_acc": seg_val_acc}, 
                            global_step=epoch)
         writer.add_scalars(main_tag="mIoU", 
-                           tag_scalar_dict={"seg_train_mIoU": train_mIoU,
-                                            "seg_val_mIoU": val_mIoU}, 
+                           tag_scalar_dict={"seg_train_mIoU": seg_train_mIoU,
+                                            "seg_val_mIoU": seg_val_mIoU}, 
                            global_step=epoch)
 
         # Close the writer
@@ -94,7 +94,7 @@ def seg_train_step(seg_model: torch.nn.Module,
     seg_model.train()
 
     # Setup train loss and train accuracy values
-    train_loss, train_acc, train_mIoU = 0, 0, 0
+    seg_train_loss, seg_train_acc, seg_train_mIoU = 0, 0, 0
 
     # Loop through data loader data batches
     for i, data in enumerate(tqdm(dataloader)):
@@ -115,7 +115,7 @@ def seg_train_step(seg_model: torch.nn.Module,
 
       # 2. Calculate  and accumulate loss
       loss = seg_loss_fn(output, mask)
-      train_loss += loss.item() 
+      seg_train_loss += loss.item() 
 
       # 3. Optimizer zero grad
       seg_optimizer.zero_grad()
@@ -127,15 +127,15 @@ def seg_train_step(seg_model: torch.nn.Module,
       seg_optimizer.step()
 
       # Calculate and accumulate metrics across all batches
-      train_acc += metrics_segmentation.pixel_accuracy(output, mask)
-      train_mIoU += metrics_segmentation.mIoU(output, mask)
+      seg_train_acc += metrics_segmentation.pixel_accuracy(output, mask)
+      seg_train_mIoU += metrics_segmentation.mIoU(output, mask)
 
     # Adjust metrics to get average loss and accuracy per batch 
-    train_loss = train_loss / len(dataloader)
-    train_acc = train_acc / len(dataloader)
-    train_mIoU = train_mIoU / len(dataloader)
+    seg_train_loss = seg_train_loss / len(dataloader)
+    seg_train_acc = seg_train_acc / len(dataloader)
+    seg_train_mIoU = seg_train_mIoU / len(dataloader)
 
-    return train_loss, train_acc, train_mIoU
+    return seg_train_loss, seg_train_acc, seg_train_mIoU
 
 def seg_val_step(seg_model: torch.nn.Module, 
               dataloader: torch.utils.data.DataLoader, 
@@ -194,12 +194,12 @@ def seg_train(seg_model: torch.nn.Module,
           ) -> Dict[str, List]:
 
     # Create empty results dictionary
-    results = {"train_loss": [],
-               "train_acc": [],
-               "train_mIoU": [],
-               "val_loss": [],
-               "val_acc": [],
-                "val_mIoU": []
+    results = {"seg_train_loss": [],
+               "seg_train_acc": [],
+               "seg_train_mIoU": [],
+               "seg_val_loss": [],
+               "seg_val_acc": [],
+                "seg_val_mIoU": []
     }
 
     es = EarlyStopping()

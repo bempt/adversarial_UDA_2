@@ -11,7 +11,12 @@ def set_device():
   device = "cuda" if torch.cuda.is_available() else "cpu"
   # error if no GPU
   print(f"[INFO] Using {device} device")
-  assert device == "cuda", "GPU not found, please enable GPU"
+  # if device is not 'cuda', request confirmation
+  if device != "cuda":
+    proceed = input("[WARNING] CUDA is not available. Training will be slow. Proceed? (y/n): ")
+    if proceed == "n":
+      print("[INFO] Canceling training. You can enable CUDA by installing a GPU or selecting 'GPU' in Colab Notebook settings.")
+      return
   return device
 
 # Set seeds
