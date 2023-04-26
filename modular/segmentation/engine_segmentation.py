@@ -221,7 +221,7 @@ def seg_train(seg_model: torch.nn.Module,
             if es(seg_model, val_loss): done = True
 
             # Update results dictionary and print what's happening
-            seg_update_results(results, train_loss, train_acc, train_mIoU, val_loss, val_acc, val_mIoU)
+            seg_update_results(epoch, results, train_loss, train_acc, train_mIoU, val_loss, val_acc, val_mIoU)
 
             ### New: Use the writer parameter to track experiments ###
             # See if there's a writer, if so, log to it
