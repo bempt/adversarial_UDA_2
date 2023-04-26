@@ -14,17 +14,8 @@ from modular.segmentation import metrics_segmentation
 from modular.utils import save_model
 import modular.segmentation.data_setup_segmentation as seg_data
 
-'''
-https://stackoverflow.com/questions/71998978/early-stopping-in-pytorch
-'''
-class EarlyStopping:
-    '''
-    Early stops the training if validation loss doesn't improve after a given patience.
 
-    Parameters:
-        patience (int): How long to wait after last time validation loss improved.
-        min_delta (float): Minimum change in the monitored quantity to qualify as an improvement.
-    '''
+class EarlyStopping:
     def __init__(self, patience=2, min_delta=0, restore_best_weights=True):
         self.patience = patience
         self.min_delta = min_delta
@@ -53,74 +44,40 @@ class EarlyStopping:
         return False
 
     
-def seg_print_epoch_results(epoch, train_loss, train_acc, train_mIoU, test_loss, test_acc, test_mIoU):
-    """
-    Prints the results of an epoch.
-    
-    Parameters:
-        epoch (int): The current epoch number.
-        train_loss (float): The training loss.
-        train_acc (float): The training accuracy.
-        train_mIoU (float): The training mean Intersection over Union (mIoU).
-        test_loss (float): The testing loss.
-        test_acc (float): The testing accuracy.
-        test_mIoU (float): The testing mean Intersection over Union (mIoU).
-    """
+def seg_print_epoch_results(epoch, train_loss, train_acc, train_mIoU, val_loss, val_acc, val_mIoU):
     print(
         f"Epoch: {epoch+1} | "
         f"seg_train_loss: {train_loss:.4f} | "
         f"seg_train_acc: {train_acc:.4f} | "
         f"seg_train_mIoU: {train_mIoU:.4f} | "
-        f"seg_test_loss: {test_loss:.4f} | "
-        f"seg_test_acc: {test_acc:.4f} | "
-        f"seg_test_mIoU: {test_mIoU:.4f}"
+        f"seg_val_loss: {val_loss:.4f} | "
+        f"seg_val_acc: {val_acc:.4f} | "
+        f"seg_val_mIoU: {val_mIoU:.4f}"
     )
 
-def seg_update_results(results, train_loss, train_acc, train_mIoU, test_loss, test_acc, test_mIoU):
-    """Updates a dictionary of results with training and testing metrics for an epoch.
-
-    Args:
-      results: A dictionary of training and testing loss as well as training and
-        testing accuracy metrics. Each metric has a value in a list for 
-        each epoch.
-        In the form: {train_loss: [...],
-                  train_acc: [...],
-                  train_mIoU: [...],
-                  test_loss: [...],
-                  test_acc: [...],
-                  test_mIoU: [...]} 
-      train_loss: A float indicating the training loss for the current epoch.
-      train_acc: A float indicating the training accuracy for the current epoch.
-      train_mIoU: A float indicating the training mIoU for the current epoch.
-      test_loss: A float indicating the testing loss for the current epoch.
-      test_acc: A float indicating the testing accuracy for the current epoch.
-      test_mIoU: A float indicating the testing mIoU for the current epoch.
-
-    Returns:
-      None. The results dictionary is updated in place.
-    """
+def seg_update_results(results, train_loss, train_acc, train_mIoU, val_loss, val_acc, val_mIoU):
     results["seg_train_loss"].append(train_loss)
     results["seg_train_acc"].append(train_acc)
     results["seg_train_mIoU"].append(train_mIoU)
-    results["seg_test_loss"].append(test_loss)
-    results["seg_test_acc"].append(test_acc)
-    results["seg_test_mIoU"].append(test_mIoU)
+    results["seg_val_loss"].append(val_loss)
+    results["seg_val_acc"].append(val_acc)
+    results["seg_val_mIoU"].append(val_mIoU)
 
-def seg_update_writer(train_loss, train_acc, train_mIoU, test_loss, test_acc, test_mIoU, writer=None, epoch=None):
+def seg_update_writer(train_loss, train_acc, train_mIoU, val_loss, val_acc, val_mIoU, writer=None, epoch=None):
     # See if there's a writer, if so, log to it
     if writer and epoch is not None:
         # Add results to SummaryWriter
         writer.add_scalars(main_tag="Loss", 
                            tag_scalar_dict={"train_loss": train_loss,
-                                            "test_loss": test_loss},
+                                            "val_loss": val_loss},
                            global_step=epoch)
         writer.add_scalars(main_tag="Accuracy", 
                            tag_scalar_dict={"train_acc": train_acc,
-                                            "test_acc": test_acc}, 
+                                            "val_acc": val_acc}, 
                            global_step=epoch)
         writer.add_scalars(main_tag="mIoU", 
                            tag_scalar_dict={"train_mIoU": train_mIoU,
-                                            "test_mIoU": test_mIoU}, 
+                                            "val_mIoU": val_mIoU}, 
                            global_step=epoch)
 
         # Close the writer
@@ -131,25 +88,7 @@ def seg_train_step(seg_model: torch.nn.Module,
                seg_loss_fn: torch.nn.Module, 
                seg_optimizer: torch.optim.Optimizer,
                device: torch.device) -> Tuple[float, float]:
-    """Trains a PyTorch model for a single epoch.
 
-    Turns a target PyTorch model to training mode and then
-    runs through all of the required training steps (forward
-    pass, loss calculation, optimizer step).
-
-    Args:
-    model: A PyTorch model to be trained.
-    dataloader: A DataLoader instance for the model to be trained on.
-    seg_loss_fn: A PyTorch loss function to minimize.
-    optimizer: A PyTorch optimizer to help minimize the loss function.
-    device: A target device to compute on (e.g. "cuda" or "cpu").
-
-    Returns:
-    A tuple of training loss and training accuracy metrics.
-    In the form (train_loss, train_accuracy). For example:
-
-    (0.1112, 0.8743)
-    """
     # Put model in train mode
     seg_model.train()
 
@@ -197,32 +136,16 @@ def seg_train_step(seg_model: torch.nn.Module,
 
     return train_loss, train_acc, train_mIoU
 
-def seg_test_step(seg_model: torch.nn.Module, 
+def seg_val_step(seg_model: torch.nn.Module, 
               dataloader: torch.utils.data.DataLoader, 
               seg_loss_fn: torch.nn.Module,
               device: torch.device) -> Tuple[float, float]:
-    """Tests a PyTorch model for a single epoch.
 
-    Turns a target PyTorch model to "eval" mode and then performs
-    a forward pass on a testing dataset.
-
-    Args:
-    model: A PyTorch model to be tested.
-    dataloader: A DataLoader instance for the model to be tested on.
-    seg_loss_fn: A PyTorch loss function to calculate loss on the test data.
-    device: A target device to compute on (e.g. "cuda" or "cpu").
-
-    Returns:
-    A tuple of testing loss and testing accuracy metrics.
-    In the form (test_loss, test_accuracy). For example:
-
-    (0.0223, 0.8985)
-    """
     # Put model in eval mode
     seg_model.eval() 
 
-    # Setup test loss and test accuracy values
-    test_loss, test_acc, test_mIoU = 0, 0, 0
+    # Setup val loss and val accuracy values
+    val_loss, val_acc, val_mIoU = 0, 0, 0
 
     # Turn on inference context manager
     with torch.inference_mode():
@@ -245,17 +168,17 @@ def seg_test_step(seg_model: torch.nn.Module,
 
             # 2. Calculate and accumulate loss
             loss = seg_loss_fn(output, mask)  
-            test_loss += loss.item()
+            val_loss += loss.item()
 
             # Calculate and accumulate metrics
-            test_acc += metrics_segmentation.pixel_accuracy(output, mask)
-            test_mIoU += metrics_segmentation.mIoU(output, mask)
+            val_acc += metrics_segmentation.pixel_accuracy(output, mask)
+            val_mIoU += metrics_segmentation.mIoU(output, mask)
 
     # Adjust metrics to get average loss and accuracy per batch 
-    test_loss = test_loss / len(dataloader)
-    test_acc = test_acc / len(dataloader)
-    test_mIoU = test_mIoU / len(dataloader)
-    return test_loss, test_acc, test_mIoU
+    val_loss = val_loss / len(dataloader)
+    val_acc = val_acc / len(dataloader)
+    val_mIoU = val_mIoU / len(dataloader)
+    return val_loss, val_acc, val_mIoU
 
 def seg_train(seg_model: torch.nn.Module, 
           train_dataloader: torch.utils.data.DataLoader, 
@@ -268,47 +191,14 @@ def seg_train(seg_model: torch.nn.Module,
           target_dir: str,
           seg_model_name: str
           ) -> Dict[str, List]:
-    """Trains and tests a PyTorch model.
 
-    Passes a target PyTorch models through train_step() and test_step()
-    functions for a number of epochs, training and testing the model
-    in the same epoch loop.
-
-    Calculates, prints and stores evaluation metrics throughout.
-
-    Stores metrics to specified writer log_dir if present.
-
-    Args:
-      model: A PyTorch model to be trained and tested.
-      train_dataloader: A DataLoader instance for the model to be trained on.
-      val_dataloader: A DataLoader instance for the model to be tested on.
-      optimizer: A PyTorch optimizer to help minimize the loss function.
-      seg_loss_fn: A PyTorch loss function to calculate loss on both datasets.
-      epochs: An integer indicating how many epochs to train for.
-      device: A target device to compute on (e.g. "cuda" or "cpu").
-      writer: A SummaryWriter() instance to log model results to.
-
-    Returns:
-      A dictionary of training and testing loss as well as training and
-      testing accuracy metrics. Each metric has a value in a list for 
-      each epoch.
-      In the form: {train_loss: [...],
-                train_acc: [...],
-                test_loss: [...],
-                test_acc: [...]} 
-      For example if training for epochs=2: 
-              {train_loss: [2.0616, 1.0537],
-                train_acc: [0.3945, 0.3945],
-                test_loss: [1.2641, 1.5706],
-                test_acc: [0.3400, 0.2973]} 
-    """
     # Create empty results dictionary
     results = {"train_loss": [],
                "train_acc": [],
                "train_mIoU": [],
-               "test_loss": [],
-               "test_acc": [],
-                "test_mIoU": []
+               "val_loss": [],
+               "val_acc": [],
+                "val_mIoU": []
     }
 
     es = EarlyStopping()
@@ -322,22 +212,22 @@ def seg_train(seg_model: torch.nn.Module,
                                             seg_loss_fn=seg_loss_fn,
                                             seg_optimizer=seg_optimizer,
                                             device=device)
-            test_loss, test_acc, test_mIoU = seg_test_step(seg_model=seg_model,
+            val_loss, val_acc, val_mIoU = seg_val_step(seg_model=seg_model,
                                             dataloader=val_dataloader,
                                             seg_loss_fn=seg_loss_fn,
                                             device=device)
             
-            if es(seg_model, test_loss): done = True
+            if es(seg_model, val_loss): done = True
 
             # Print out what's happening
-            seg_print_epoch_results(epoch, train_loss, train_acc, train_mIoU, test_loss, test_acc, test_mIoU)
+            seg_print_epoch_results(epoch, train_loss, train_acc, train_mIoU, val_loss, val_acc, val_mIoU)
 
             # Update results dictionary
-            seg_update_results(results, train_loss, train_acc, train_mIoU, test_loss, test_acc, test_mIoU)
+            seg_update_results(results, train_loss, train_acc, train_mIoU, val_loss, val_acc, val_mIoU)
 
             ### New: Use the writer parameter to track experiments ###
             # See if there's a writer, if so, log to it
-            seg_update_writer(train_loss, train_acc, train_mIoU, test_loss, test_acc, test_mIoU, writer, epoch)
+            seg_update_writer(train_loss, train_acc, train_mIoU, val_loss, val_acc, val_mIoU, writer, epoch)
 
     ### End new ###
 
@@ -478,35 +368,19 @@ def adv_train_step(seg_model: torch.nn.Module,
     return seg_train_loss, seg_train_acc, seg_train_mIoU
 
 
-def adv_test_step(seg_model: torch.nn.Module, 
+def adv_val_step(seg_model: torch.nn.Module, 
                 disc_model: torch.nn.Module,
               dataloader: torch.utils.data.DataLoader, 
               seg_loss_fn: torch.nn.Module,
               device: torch.device) -> Tuple[float, float]:
-    """Tests a PyTorch model for a single epoch.
 
-    Turns a target PyTorch model to "eval" mode and then performs
-    a forward pass on a testing dataset.
-
-    Args:
-    model: A PyTorch model to be tested.
-    dataloader: A DataLoader instance for the model to be tested on.
-    seg_loss_fn: A PyTorch loss function to calculate loss on the test data.
-    device: A target device to compute on (e.g. "cuda" or "cpu").
-
-    Returns:
-    A tuple of testing loss and testing accuracy metrics.
-    In the form (test_loss, test_accuracy). For example:
-
-    (0.0223, 0.8985)
-    """
     # Put model in eval mode
     seg_model.eval() 
     disc_model.eval()
 
-    # Setup test loss and test accuracy values
-    seg_test_loss, seg_test_acc, seg_test_mIoU = 0, 0, 0
-    disc_test_loss, disc_test_acc = 0, 0
+    # Setup val loss and val accuracy values
+    seg_val_loss, seg_val_acc, seg_val_mIoU = 0, 0, 0
+    disc_val_loss, disc_val_acc = 0, 0
 
 
     # Turn on inference context manager
@@ -531,14 +405,14 @@ def adv_test_step(seg_model: torch.nn.Module,
 
             # 2. Calculate and accumulate loss
             loss = seg_loss_fn(seg_output, mask)  
-            seg_test_loss += loss.item()
+            seg_val_loss += loss.item()
 
             # Calculate and accumulate metrics
-            seg_test_acc += metrics_segmentation.pixel_accuracy(seg_output, mask)
-            seg_test_mIoU += metrics_segmentation.mIoU(seg_output, mask)
+            seg_val_acc += metrics_segmentation.pixel_accuracy(seg_output, mask)
+            seg_val_mIoU += metrics_segmentation.mIoU(seg_output, mask)
 
     # Adjust metrics to get average loss and accuracy per batch 
-    seg_test_loss = seg_test_loss / len(dataloader)
-    seg_test_acc = seg_test_acc / len(dataloader)
-    seg_test_mIoU = seg_test_mIoU / len(dataloader)
-    return seg_test_loss, seg_test_acc, seg_test_mIoU
+    seg_val_loss = seg_val_loss / len(dataloader)
+    seg_val_acc = seg_val_acc / len(dataloader)
+    seg_val_mIoU = seg_val_mIoU / len(dataloader)
+    return seg_val_loss, seg_val_acc, seg_val_mIoU
