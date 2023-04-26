@@ -8,6 +8,7 @@ from tqdm import tqdm
 from typing import Dict, List, Tuple
 from torch.utils.tensorboard import SummaryWriter
 import torch.nn.functional as F
+import copy
 
 from modular.segmentation import metrics_segmentation
 from modular.utils import save_model
@@ -16,7 +17,7 @@ import modular.segmentation.data_setup_segmentation as seg_data
 '''
 https://stackoverflow.com/questions/71998978/early-stopping-in-pytorch
 '''
-class EarlyStopper:
+class EarlyStopping:
     '''
     Early stops the training if validation loss doesn't improve after a given patience.
 
@@ -24,21 +25,33 @@ class EarlyStopper:
         patience (int): How long to wait after last time validation loss improved.
         min_delta (float): Minimum change in the monitored quantity to qualify as an improvement.
     '''
-    def __init__(self, patience=1, min_delta=0):
+    def __init__(self, patience=2, min_delta=0, restore_best_weights=True):
         self.patience = patience
         self.min_delta = min_delta
+        self.restore_best_weights = restore_best_weights
+        self.best_model = None
+        self.best_loss = None
         self.counter = 0
-        self.min_validation_loss = np.inf
+        self.status
 
-    def early_stop(self, validation_loss):
-        if validation_loss < self.min_validation_loss:
-            self.min_validation_loss = validation_loss
+    def __call__(self, model, val_loss):
+        if self.best_loss == None:
+            self.best_loss = val_loss
+            self.best_model = copy.deepcopy(model)
+        elif self.best_loss - val_loss > self.min_delta:
+            self.best_loss = val_loss
             self.counter = 0
-        elif validation_loss > (self.min_validation_loss + self.min_delta):
+            self.best_model.load_state_dict(model.state_dict())
+        elif self.best_loss - val_loss < self.min_delta:
             self.counter += 1
             if self.counter >= self.patience:
+                self.status = f"Stopped on {self.counter}"
+                if self.restore_best_weights:
+                    model.load_state_dict(self.best_model.state_dict())
                 return True
+        self.status = f"{self.counter}/{self.patience}"
         return False
+
     
 def seg_print_epoch_results(epoch, train_loss, train_acc, train_mIoU, test_loss, test_acc, test_mIoU):
     """
@@ -86,12 +99,12 @@ def seg_update_results(results, train_loss, train_acc, train_mIoU, test_loss, te
     Returns:
       None. The results dictionary is updated in place.
     """
-    results["train_loss"].append(train_loss)
-    results["train_acc"].append(train_acc)
-    results["train_mIoU"].append(train_mIoU)
-    results["test_loss"].append(test_loss)
-    results["test_acc"].append(test_acc)
-    results["test_mIoU"].append(test_mIoU)
+    results["seg_train_loss"].append(train_loss)
+    results["seg_train_acc"].append(train_acc)
+    results["seg_train_mIoU"].append(train_mIoU)
+    results["seg_test_loss"].append(test_loss)
+    results["seg_test_acc"].append(test_acc)
+    results["seg_test_mIoU"].append(test_mIoU)
 
 def seg_update_writer(train_loss, train_acc, train_mIoU, test_loss, test_acc, test_mIoU, writer=None, epoch=None):
     # See if there's a writer, if so, log to it
@@ -298,34 +311,33 @@ def seg_train(seg_model: torch.nn.Module,
                 "test_mIoU": []
     }
 
-    early_stopper = EarlyStopper(patience=3, min_delta=10)
+    es = EarlyStopping()
 
     # Loop through training and testing steps for a number of epochs
+    done = False
     for epoch in range(epochs):
-        train_loss, train_acc, train_mIoU = seg_train_step(seg_model=seg_model,
-                                          dataloader=train_dataloader,
-                                          seg_loss_fn=seg_loss_fn,
-                                          seg_optimizer=seg_optimizer,
-                                          device=device)
-        test_loss, test_acc, test_mIoU = seg_test_step(seg_model=seg_model,
-                                          dataloader=val_dataloader,
-                                          seg_loss_fn=seg_loss_fn,
-                                          device=device)
-        if early_stopper.early_stop(test_loss):
-            print("Early stopping")
-            break
+        if not done:
+            train_loss, train_acc, train_mIoU = seg_train_step(seg_model=seg_model,
+                                            dataloader=train_dataloader,
+                                            seg_loss_fn=seg_loss_fn,
+                                            seg_optimizer=seg_optimizer,
+                                            device=device)
+            test_loss, test_acc, test_mIoU = seg_test_step(seg_model=seg_model,
+                                            dataloader=val_dataloader,
+                                            seg_loss_fn=seg_loss_fn,
+                                            device=device)
+            
+            if es(seg_model, test_loss): done = True
 
-        # Print out what's happening
-        seg_print_epoch_results(epoch, train_loss, train_acc, train_mIoU, test_loss, test_acc, test_mIoU)
+            # Print out what's happening
+            seg_print_epoch_results(epoch, train_loss, train_acc, train_mIoU, test_loss, test_acc, test_mIoU)
 
-        # Update results dictionary
-        seg_update_results(results, train_loss, train_acc, train_mIoU, test_loss, test_acc, test_mIoU)
+            # Update results dictionary
+            seg_update_results(results, train_loss, train_acc, train_mIoU, test_loss, test_acc, test_mIoU)
 
-        ### New: Use the writer parameter to track experiments ###
-        # See if there's a writer, if so, log to it
-        seg_update_writer(train_loss, train_acc, train_mIoU, test_loss, test_acc, test_mIoU, writer, epoch)
-
-        save_model(seg_model, target_dir, seg_model_name)
+            ### New: Use the writer parameter to track experiments ###
+            # See if there's a writer, if so, log to it
+            seg_update_writer(train_loss, train_acc, train_mIoU, test_loss, test_acc, test_mIoU, writer, epoch)
 
     ### End new ###
 
