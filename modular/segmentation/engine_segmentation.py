@@ -69,16 +69,16 @@ def seg_update_writer(train_loss, train_acc, train_mIoU, val_loss, val_acc, val_
     if writer and epoch is not None:
         # Add results to SummaryWriter
         writer.add_scalars(main_tag="Loss", 
-                           tag_scalar_dict={"train_loss": train_loss,
-                                            "val_loss": val_loss},
+                           tag_scalar_dict={"seg_train_loss": train_loss,
+                                            "seg_val_loss": val_loss},
                            global_step=epoch)
         writer.add_scalars(main_tag="Accuracy", 
-                           tag_scalar_dict={"train_acc": train_acc,
-                                            "val_acc": val_acc}, 
+                           tag_scalar_dict={"seg_train_acc": train_acc,
+                                            "seg_val_acc": val_acc}, 
                            global_step=epoch)
         writer.add_scalars(main_tag="mIoU", 
-                           tag_scalar_dict={"train_mIoU": train_mIoU,
-                                            "val_mIoU": val_mIoU}, 
+                           tag_scalar_dict={"seg_train_mIoU": train_mIoU,
+                                            "seg_val_mIoU": val_mIoU}, 
                            global_step=epoch)
 
         # Close the writer
