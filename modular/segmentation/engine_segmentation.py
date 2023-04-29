@@ -41,6 +41,7 @@ class EarlyStopping:
                     model.load_state_dict(self.best_model.state_dict())
                 return True
         self.status = f"{self.counter}/{self.patience}"
+
         return False
     
 
@@ -218,6 +219,7 @@ def seg_train(seg_model: torch.nn.Module,
                                             seg_loss_fn=seg_loss_fn,
                                             device=device)
             
+            print(f"Early Stopping: {es.status}")
             if es(seg_model, val_loss): done = True
 
             # Update results dictionary and print what's happening
