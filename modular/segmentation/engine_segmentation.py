@@ -16,7 +16,7 @@ import modular.segmentation.data_setup_segmentation as seg_data
 
 
 class EarlyStopping:
-    def __init__(self, patience=4, min_delta=0, restore_best_weights=True):
+    def __init__(self, patience=10, min_delta=0, restore_best_weights=True):
         self.patience = patience
         self.min_delta = min_delta
         self.restore_best_weights = restore_best_weights
@@ -32,7 +32,7 @@ class EarlyStopping:
         elif self.best_loss - val_loss > self.min_delta:
             self.best_loss = val_loss
             self.counter = 0
-            self.best_model.load_state_dict(model.state_dict())
+            self.best_model = copy.deepcopy(model)
         elif self.best_loss - val_loss < self.min_delta:
             self.counter += 1
             if self.counter >= self.patience:
@@ -41,7 +41,6 @@ class EarlyStopping:
                     model.load_state_dict(self.best_model.state_dict())
                 return True
         self.status = f"{self.counter}/{self.patience}"
-
         return False
     
 
@@ -220,7 +219,9 @@ def seg_train(seg_model: torch.nn.Module,
                                             device=device)
             
             print(f"Early Stopping: {es.status}")
-            if es(seg_model, val_loss): done = True
+            if es(seg_model, val_loss):
+                done = True
+                save_model(seg_model, target_dir, seg_model_name)
 
             # Update results dictionary and print what's happening
             seg_update_results(epoch, results, train_loss, train_acc, train_mIoU, val_loss, val_acc, val_mIoU)
@@ -229,8 +230,6 @@ def seg_train(seg_model: torch.nn.Module,
             # See if there's a writer, if so, log to it
             seg_update_writer(train_loss, train_acc, train_mIoU, val_loss, val_acc, val_mIoU, writer, epoch)
 
-            # save model
-            save_model(seg_model, target_dir, seg_model_name)
     ### End new ###
 
     # Return the filled results at the end of the epochs
