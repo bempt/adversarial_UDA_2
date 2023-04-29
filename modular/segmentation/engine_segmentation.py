@@ -222,6 +222,8 @@ def seg_train(seg_model: torch.nn.Module,
             if es(seg_model, val_loss):
                 done = True
                 save_model(seg_model, target_dir, seg_model_name)
+            elif es.counter == 0:  # Save the model if it performs better than the prior epoch
+                save_model(seg_model, target_dir, seg_model_name)
 
             # Update results dictionary and print what's happening
             seg_update_results(epoch, results, train_loss, train_acc, train_mIoU, val_loss, val_acc, val_mIoU)
