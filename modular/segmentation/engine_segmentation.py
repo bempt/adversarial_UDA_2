@@ -16,7 +16,7 @@ import modular.segmentation.data_setup_segmentation as seg_data
 
 
 class EarlyStopping:
-    def __init__(self, patience=2, min_delta=0, restore_best_weights=True):
+    def __init__(self, patience=4, min_delta=0, restore_best_weights=True):
         self.patience = patience
         self.min_delta = min_delta
         self.restore_best_weights = restore_best_weights
