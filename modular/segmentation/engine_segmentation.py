@@ -227,6 +227,8 @@ def seg_train(seg_model: torch.nn.Module,
             # See if there's a writer, if so, log to it
             seg_update_writer(train_loss, train_acc, train_mIoU, val_loss, val_acc, val_mIoU, writer, epoch)
 
+            # save model
+            save_model(seg_model, target_dir, seg_model_name)
     ### End new ###
 
     # Return the filled results at the end of the epochs
@@ -413,4 +415,5 @@ def adv_val_step(seg_model: torch.nn.Module,
     seg_val_loss = seg_val_loss / len(dataloader)
     seg_val_acc = seg_val_acc / len(dataloader)
     seg_val_mIoU = seg_val_mIoU / len(dataloader)
+
     return seg_val_loss, seg_val_acc, seg_val_mIoU
