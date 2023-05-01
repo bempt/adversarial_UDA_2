@@ -85,10 +85,13 @@ def seg_update_writer(seg_train_loss, seg_train_acc, seg_train_mIoU, seg_val_los
         writer.close()
 
 def seg_train_step(seg_model: torch.nn.Module, 
+                   disc_model: torch.nn.Module,
                dataloader: torch.utils.data.DataLoader, 
                seg_loss_fn: torch.nn.Module, 
+               disc_loss_fn: torch.nn.Module,
                seg_optimizer: torch.optim.Optimizer,
-               device: torch.device) -> Tuple[float, float]:
+               device: torch.device,
+               lambda_adv: float) -> Tuple[float, float]:
 
     # Put model in train mode
     seg_model.train()
@@ -99,36 +102,42 @@ def seg_train_step(seg_model: torch.nn.Module,
     # Loop through data loader data batches
     for i, data in enumerate(tqdm(dataloader)):
 
-      # Send data to target device
-      image_tiles, mask_tiles = data
+        # Send data to target device
+        image_tiles, mask_tiles = data
 
-      # if patch:
-      #     bs, n_tiles, c, h, w = image_tiles.size()
+        # if patch:
+        #     bs, n_tiles, c, h, w = image_tiles.size()
 
-      #     image_tiles = image_tiles.view(-1,c, h, w)
-      #     mask_tiles = mask_tiles.view(-1, h, w)
+        #     image_tiles = image_tiles.view(-1,c, h, w)
+        #     mask_tiles = mask_tiles.view(-1, h, w)
 
-      image = image_tiles.to(device); mask = mask_tiles.to(device);
+        image = image_tiles.to(device); mask = mask_tiles.to(device);
 
-      # 1. Forward pass
-      output = seg_model(image)
+        # 1. Forward pass
+        output = seg_model(image)
 
-      # 2. Calculate  and accumulate loss
-      loss = seg_loss_fn(output, mask)
-      seg_train_loss += loss.item() 
+        # 2. Calculate  and accumulate loss
+        loss = seg_loss_fn(output, mask)
+        seg_train_loss += loss.item() 
 
-      # 3. Optimizer zero grad
-      seg_optimizer.zero_grad()
+        # 3. Optimizer zero grad
+        seg_optimizer.zero_grad()
 
-      # 4. Loss backward
-      loss.backward()
+        # 4. Loss backward
+        loss.backward()
 
-      # 5. Optimizer step
-      seg_optimizer.step()
+        # Avdersarial loss
+        if disc_model is not None:
+            disc_output = disc_model(output)
+            adv_loss = disc_loss_fn(disc_output, torch.zeros(disc_output.size()).to(device))
+            adv_loss.backward()
 
-      # Calculate and accumulate metrics across all batches
-      seg_train_acc += metrics_segmentation.pixel_accuracy(output, mask)
-      seg_train_mIoU += metrics_segmentation.mIoU(output, mask)
+        # 5. Optimizer step
+        seg_optimizer.step()
+
+        # Calculate and accumulate metrics across all batches
+        seg_train_acc += metrics_segmentation.pixel_accuracy(output, mask)
+        seg_train_mIoU += metrics_segmentation.mIoU(output, mask)
 
     # Adjust metrics to get average loss and accuracy per batch 
     seg_train_loss = seg_train_loss / len(dataloader)
@@ -237,186 +246,244 @@ def seg_train(seg_model: torch.nn.Module,
     # Return the filled results at the end of the epochs
     return results
 
-def adv_forward_pass(seg_model: torch.nn.Module,
-                        disc_model: torch.nn.Module,
-                        image: torch.Tensor,
-                        mask_onehot: torch.Tensor,
-                        device: torch.device):
-    seg_output = seg_model(image)
-    disc_output_real = disc_model(mask_onehot)
-    disc_output_fake = disc_model(seg_output)
 
-    # Concatenate real and fake outputs and domain labels
-    disc_output = torch.cat((disc_output_real, disc_output_fake), dim=0)
+def discriminator_train_step(seg_model: torch.nn.Module,
+                             disc_model: torch.nn.Module,
+                             dataloader: torch.utils.data.DataLoader,
+                             disc_loss_fn: torch.nn.Module,
+                             disc_optimizer: torch.optim.Optimizer,
+                             device: torch.device,
+                             lambda_adv: float) -> float:
 
-    # Batch labels (source=0, target=1), same size as output_D
-    domain_labels_real = torch.ones(disc_output_real.size(0), 1).to(device)
-    domain_labels_fake = torch.zeros(disc_output_fake.size(0), 1).to(device)
-    domain_labels = torch.cat((domain_labels_real, domain_labels_fake), dim=0)
-    return disc_output_real, disc_output_fake, disc_output
-
-
-def adv_train_step(seg_model: torch.nn.Module, 
-                   disc_model: torch.nn.Module,
-               dataloader: torch.utils.data.DataLoader, 
-               seg_loss_fn: torch.nn.Module, 
-               disc_loss_fn: torch.nn.Module,
-               seg_optimizer: torch.optim.Optimizer,
-               disc_optimizer: torch.optim.Optimizer,
-               device: torch.device) -> Tuple[float, float]:
-    
-    # Put model in train mode
+    # Put both models in train mode
     seg_model.train()
     disc_model.train()
 
-    # Setup train loss and train accuracy values
-    seg_train_loss, seg_train_acc, seg_train_mIoU = 0, 0, 0
-    disc_train_loss, disc_train_acc = 0, 0
+    # Setup discriminator train loss value
+    disc_train_loss = 0
 
     # Loop through data loader data batches
     for i, data in enumerate(tqdm(dataloader)):
-
         # Send data to target device
-        image_tiles, mask_tiles = data
+        image_tiles, _ = data
+        image = image_tiles.to(device)
 
-        # if patch:
-        #     bs, n_tiles, c, h, w = image_tiles.size()
+        # 1. Forward pass through the segmentation model
+        output = seg_model(image)
 
-        #     image_tiles = image_tiles.view(-1,c, h, w)
-        #     mask_tiles = mask_tiles.view(-1, h, w)
+        # 2. Compute the domain discriminator predictions
+        disc_output = disc_model(output.detach())
 
-        batch_size = image_tiles.size(0)
+        # 3. Compute the domain discriminator loss
+        disc_loss = disc_loss_fn(disc_output, torch.ones(disc_output.size()).to(device) * lambda_adv)
 
-        image = image_tiles.to(device); mask = mask_tiles.to(device);
-
-        mask_onehot = F.one_hot(mask, num_classes=seg_data.n_classes).permute(0, 3, 1, 2).float()
-        mask_onehot = mask_onehot.to(device)
-
-        ################################
-        # Discriminator training phase #
-        ################################
-
-        # segmentation model gradients are turned off
-        for param in seg_model.parameters():
-            param.requires_grad = False
-        for param in disc_model.parameters():
-            param.requires_grad = True
-
-        # 1. Forward pass
-        seg_output, disc_output_real, disc_output_fake, disc_output = adv_forward_pass(seg_model, disc_model, image, mask_onehot, device)
-
-        # 2. Calculate  and accumulate loss
-        disc_loss = disc_loss_fn(disc_output, domain_labels) # domain classification loss
-        disc_train_loss += disc_loss.item()
-
-        # 3. Optimizer zero grad
+        # 4. Optimizer zero grad
         disc_optimizer.zero_grad()
 
-        # 4. Loss backward
+        # 5. Loss backward
         disc_loss.backward()
 
-        # 5. Optimizer step
+        # 6. Optimizer step
         disc_optimizer.step()
 
-        disc_train_acc += metrics_segmentation.disc_accuracy(disc_output_real, disc_output_fake, batch_size)
+        # Calculate and accumulate loss
+        disc_train_loss += disc_loss.item()
 
-        ###############################
-        # Segmentation training phase #
-        ###############################
+    # Adjust loss to get average loss per batch
+    disc_train_loss = disc_train_loss / len(dataloader)
 
-        # turn off discriminator gradients
-        for param in seg_model.parameters():
-            param.requires_grad = True
-        for param in disc_model.parameters():
-            param.requires_grad = False
+    return disc_train_loss
 
-        # 1. Forward pass
-        seg_output = seg_model(image)
-        disc_output = disc_model(seg_output)
 
-        # batch labels (source=0, target=1), same size as output_D
-        domain_labels = torch.ones(disc_output.size(0), 1).to(device)
 
-        # 2. Calculate  and accumulate loss
-        seg_loss = seg_loss_fn(seg_output, mask)
-        disc_loss = disc_loss_fn(disc_output, domain_labels)
-        total_seg_loss = seg_loss + disc_loss
 
-        seg_train_loss += total_seg_loss.item() 
 
-        # 3. Optimizer zero grad
-        seg_optimizer.zero_grad()
 
-        # 4. Loss backward
-        total_seg_loss.backward()
 
-        # 5. Optimizer step
-        seg_optimizer.step()
 
-        # Calculate and accumulate metrics across all batches
-        seg_train_acc += metrics_segmentation.pixel_accuracy(seg_output, mask)
-        seg_train_mIoU += metrics_segmentation.mIoU(seg_output, mask)
 
-    # make sure gradients are turned on for both models
-    for param in seg_model.parameters():
-        param.requires_grad = True
-    for param in disc_model.parameters():
-        param.requires_grad = True
+
+
+# def adv_forward_pass(seg_model: torch.nn.Module,
+#                         disc_model: torch.nn.Module,
+#                         image: torch.Tensor,
+#                         mask_onehot: torch.Tensor,
+#                         device: torch.device):
+#     seg_output = seg_model(image)
+#     disc_output_real = disc_model(mask_onehot)
+#     disc_output_fake = disc_model(seg_output)
+
+#     # Concatenate real and fake outputs and domain labels
+#     disc_output = torch.cat((disc_output_real, disc_output_fake), dim=0)
+
+#     # Batch labels (source=0, target=1), same size as output_D
+#     domain_labels_real = torch.ones(disc_output_real.size(0), 1).to(device)
+#     domain_labels_fake = torch.zeros(disc_output_fake.size(0), 1).to(device)
+#     domain_labels = torch.cat((domain_labels_real, domain_labels_fake), dim=0)
+#     return disc_output_real, disc_output_fake, disc_output
+
+
+# def adv_train_step(seg_model: torch.nn.Module, 
+#                    disc_model: torch.nn.Module,
+#                dataloader: torch.utils.data.DataLoader, 
+#                seg_loss_fn: torch.nn.Module, 
+#                disc_loss_fn: torch.nn.Module,
+#                seg_optimizer: torch.optim.Optimizer,
+#                disc_optimizer: torch.optim.Optimizer,
+#                device: torch.device) -> Tuple[float, float]:
     
-    # Adjust metrics to get average loss and accuracy per batch 
-    seg_train_loss = seg_train_loss / len(dataloader)
-    seg_train_acc = seg_train_acc / len(dataloader)
-    seg_train_mIoU = seg_train_mIoU / len(dataloader)
+#     # Put model in train mode
+#     seg_model.train()
+#     disc_model.train()
 
-    return seg_train_loss, seg_train_acc, seg_train_mIoU
+#     # Setup train loss and train accuracy values
+#     seg_train_loss, seg_train_acc, seg_train_mIoU = 0, 0, 0
+#     disc_train_loss, disc_train_acc = 0, 0
+
+#     # Loop through data loader data batches
+#     for i, data in enumerate(tqdm(dataloader)):
+
+#         # Send data to target device
+#         image_tiles, mask_tiles = data
+
+#         # if patch:
+#         #     bs, n_tiles, c, h, w = image_tiles.size()
+
+#         #     image_tiles = image_tiles.view(-1,c, h, w)
+#         #     mask_tiles = mask_tiles.view(-1, h, w)
+
+#         batch_size = image_tiles.size(0)
+
+#         image = image_tiles.to(device); mask = mask_tiles.to(device);
+
+#         mask_onehot = F.one_hot(mask, num_classes=seg_data.n_classes).permute(0, 3, 1, 2).float()
+#         mask_onehot = mask_onehot.to(device)
+
+#         ################################
+#         # Discriminator training phase #
+#         ################################
+
+#         # segmentation model gradients are turned off
+#         for param in seg_model.parameters():
+#             param.requires_grad = False
+#         for param in disc_model.parameters():
+#             param.requires_grad = True
+
+#         # 1. Forward pass
+#         seg_output, disc_output_real, disc_output_fake, disc_output = adv_forward_pass(seg_model, disc_model, image, mask_onehot, device)
+
+#         # 2. Calculate  and accumulate loss
+#         disc_loss = disc_loss_fn(disc_output, domain_labels) # domain classification loss
+#         disc_train_loss += disc_loss.item()
+
+#         # 3. Optimizer zero grad
+#         disc_optimizer.zero_grad()
+
+#         # 4. Loss backward
+#         disc_loss.backward()
+
+#         # 5. Optimizer step
+#         disc_optimizer.step()
+
+#         disc_train_acc += metrics_segmentation.disc_accuracy(disc_output_real, disc_output_fake, batch_size)
+
+#         ###############################
+#         # Segmentation training phase #
+#         ###############################
+
+#         # turn off discriminator gradients
+#         for param in seg_model.parameters():
+#             param.requires_grad = True
+#         for param in disc_model.parameters():
+#             param.requires_grad = False
+
+#         # 1. Forward pass
+#         seg_output = seg_model(image)
+#         disc_output = disc_model(seg_output)
+
+#         # batch labels (source=0, target=1), same size as output_D
+#         domain_labels = torch.ones(disc_output.size(0), 1).to(device)
+
+#         # 2. Calculate  and accumulate loss
+#         seg_loss = seg_loss_fn(seg_output, mask)
+#         disc_loss = disc_loss_fn(disc_output, domain_labels)
+#         total_seg_loss = seg_loss + disc_loss
+
+#         seg_train_loss += total_seg_loss.item() 
+
+#         # 3. Optimizer zero grad
+#         seg_optimizer.zero_grad()
+
+#         # 4. Loss backward
+#         total_seg_loss.backward()
+
+#         # 5. Optimizer step
+#         seg_optimizer.step()
+
+#         # Calculate and accumulate metrics across all batches
+#         seg_train_acc += metrics_segmentation.pixel_accuracy(seg_output, mask)
+#         seg_train_mIoU += metrics_segmentation.mIoU(seg_output, mask)
+
+#     # make sure gradients are turned on for both models
+#     for param in seg_model.parameters():
+#         param.requires_grad = True
+#     for param in disc_model.parameters():
+#         param.requires_grad = True
+    
+#     # Adjust metrics to get average loss and accuracy per batch 
+#     seg_train_loss = seg_train_loss / len(dataloader)
+#     seg_train_acc = seg_train_acc / len(dataloader)
+#     seg_train_mIoU = seg_train_mIoU / len(dataloader)
+
+#     return seg_train_loss, seg_train_acc, seg_train_mIoU
 
 
-def adv_val_step(seg_model: torch.nn.Module, 
-                disc_model: torch.nn.Module,
-              dataloader: torch.utils.data.DataLoader, 
-              seg_loss_fn: torch.nn.Module,
-              device: torch.device) -> Tuple[float, float]:
+# def adv_val_step(seg_model: torch.nn.Module, 
+#                 disc_model: torch.nn.Module,
+#               dataloader: torch.utils.data.DataLoader, 
+#               seg_loss_fn: torch.nn.Module,
+#               device: torch.device) -> Tuple[float, float]:
 
-    # Put model in eval mode
-    seg_model.eval() 
-    disc_model.eval()
+#     # Put model in eval mode
+#     seg_model.eval() 
+#     disc_model.eval()
 
-    # Setup val loss and val accuracy values
-    seg_val_loss, seg_val_acc, seg_val_mIoU = 0, 0, 0
-    disc_val_loss, disc_val_acc = 0, 0
+#     # Setup val loss and val accuracy values
+#     seg_val_loss, seg_val_acc, seg_val_mIoU = 0, 0, 0
+#     disc_val_loss, disc_val_acc = 0, 0
 
 
-    # Turn on inference context manager
-    with torch.inference_mode():
-        # Loop through DataLoader batches
-        for i, data in enumerate(tqdm(dataloader)):
+#     # Turn on inference context manager
+#     with torch.inference_mode():
+#         # Loop through DataLoader batches
+#         for i, data in enumerate(tqdm(dataloader)):
             
-            # Send data to target device
-            image_tiles, mask_tiles = data
+#             # Send data to target device
+#             image_tiles, mask_tiles = data
 
-            # if patch:
-            #         bs, n_tiles, c, h, w = image_tiles.size()
+#             # if patch:
+#             #         bs, n_tiles, c, h, w = image_tiles.size()
 
-            #         image_tiles = image_tiles.view(-1,c, h, w)
-            #         mask_tiles = mask_tiles.view(-1, h, w)
+#             #         image_tiles = image_tiles.view(-1,c, h, w)
+#             #         mask_tiles = mask_tiles.view(-1, h, w)
 
-            image = image_tiles.to(device); mask = mask_tiles.to(device);
+#             image = image_tiles.to(device); mask = mask_tiles.to(device);
 
-            # 1. Forward pass
-            seg_output = seg_model(image)
-            # ADD ADV_FORWARD_PASS HERE
+#             # 1. Forward pass
+#             seg_output = seg_model(image)
+#             # ADD ADV_FORWARD_PASS HERE
 
-            # 2. Calculate and accumulate loss
-            loss = seg_loss_fn(seg_output, mask)  
-            seg_val_loss += loss.item()
+#             # 2. Calculate and accumulate loss
+#             loss = seg_loss_fn(seg_output, mask)  
+#             seg_val_loss += loss.item()
 
-            # Calculate and accumulate metrics
-            seg_val_acc += metrics_segmentation.pixel_accuracy(seg_output, mask)
-            seg_val_mIoU += metrics_segmentation.mIoU(seg_output, mask)
+#             # Calculate and accumulate metrics
+#             seg_val_acc += metrics_segmentation.pixel_accuracy(seg_output, mask)
+#             seg_val_mIoU += metrics_segmentation.mIoU(seg_output, mask)
 
-    # Adjust metrics to get average loss and accuracy per batch 
-    seg_val_loss = seg_val_loss / len(dataloader)
-    seg_val_acc = seg_val_acc / len(dataloader)
-    seg_val_mIoU = seg_val_mIoU / len(dataloader)
+#     # Adjust metrics to get average loss and accuracy per batch 
+#     seg_val_loss = seg_val_loss / len(dataloader)
+#     seg_val_acc = seg_val_acc / len(dataloader)
+#     seg_val_mIoU = seg_val_mIoU / len(dataloader)
 
-    return seg_val_loss, seg_val_acc, seg_val_mIoU
+#     return seg_val_loss, seg_val_acc, seg_val_mIoU
