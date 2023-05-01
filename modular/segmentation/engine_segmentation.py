@@ -1,6 +1,3 @@
-"""
-Contains functions for training and testing a PyTorch model.
-"""
 import torch
 
 import numpy as np
@@ -85,36 +82,48 @@ def seg_update_writer(seg_train_loss, seg_train_acc, seg_train_mIoU, seg_val_los
         writer.close()
 
 def seg_train_step(seg_model: torch.nn.Module, 
-                   disc_model: torch.nn.Module,
-               dataloader: torch.utils.data.DataLoader, 
+                   disc_model: torch.nn.Module,  # ADDED: domain discriminator model
+               source_dataloader: torch.utils.data.DataLoader,
+               target_dataloader: torch.utils.data.DataLoader,
                seg_loss_fn: torch.nn.Module, 
-               disc_loss_fn: torch.nn.Module,
+               disc_loss_fn: torch.nn.Module,  # ADDED: domain discriminator loss function
                seg_optimizer: torch.optim.Optimizer,
+               disc_optimizer: torch.optim.Optimizer,  # ADDED: domain discriminator optimizer
                device: torch.device,
-               lambda_adv: float) -> Tuple[float, float]:
+               lambda_adv: float) -> Tuple[float, float]:  # ADDED: lambda_adv parameter to control adversarial loss weight
 
     # Put model in train mode
     seg_model.train()
+
+    if disc_model:  # ADDED: Put domain discriminator model in train mode if exists
+        disc_model.train()
 
     # Setup train loss and train accuracy values
     seg_train_loss, seg_train_acc, seg_train_mIoU = 0, 0, 0
 
     # Loop through data loader data batches
-    for i, data in enumerate(tqdm(dataloader)):
+    for i, data in enumerate(tqdm(source_dataloader)):
 
         # Send data to target device
         image_tiles, mask_tiles = data
-
-        # if patch:
-        #     bs, n_tiles, c, h, w = image_tiles.size()
-
-        #     image_tiles = image_tiles.view(-1,c, h, w)
-        #     mask_tiles = mask_tiles.view(-1, h, w)
 
         image = image_tiles.to(device); mask = mask_tiles.to(device);
 
         # 1. Forward pass
         output = seg_model(image)
+
+        # Get target domain data
+        target_data_iter = iter(target_dataloader)
+        try:
+            target_image_tiles, _ = next(target_data_iter)
+        except StopIteration:
+            target_data_iter = iter(target_dataloader)
+            target_image_tiles, _ = next(target_data_iter)
+
+        target_image = target_image_tiles.to(device)
+
+        # Forward pass through the segmentation model for target domain data
+        target_output = seg_model(target_image)
 
         # 2. Calculate  and accumulate loss
         loss = seg_loss_fn(output, mask)
@@ -123,26 +132,41 @@ def seg_train_step(seg_model: torch.nn.Module,
         # 3. Optimizer zero grad
         seg_optimizer.zero_grad()
 
+        if disc_model:  # ADDED: Zero grad for domain discriminator optimizer if exists
+            disc_optimizer.zero_grad()
+
         # 4. Loss backward
         loss.backward()
 
         # Avdersarial loss
         if disc_model is not None:
-            disc_output = disc_model(output)
-            adv_loss = disc_loss_fn(disc_output, torch.zeros(disc_output.size()).to(device))
-            adv_loss.backward()
+            # Get domain ground truth labels for source and target
+            domain_gt = torch.cat((torch.zeros(image.size(0)), torch.ones(image.size(0)))).to(device)
 
+            # Pass the concatenated source and target feature maps through the domain discriminator
+            disc_output = disc_model(torch.cat((output.detach(), target_output.detach()), 0))
+            
+            # Compute the adversarial loss
+            adv_loss = disc_loss_fn(disc_output, domain_gt)
+
+            # Backpropagate the adversarial loss scaled by lambda_adv
+            (lambda_adv * adv_loss).backward()
+
+        
         # 5. Optimizer step
         seg_optimizer.step()
+
+        if disc_model:  # ADDED: Step for domain discriminator optimizer if exists
+            disc_optimizer.step()
 
         # Calculate and accumulate metrics across all batches
         seg_train_acc += metrics_segmentation.pixel_accuracy(output, mask)
         seg_train_mIoU += metrics_segmentation.mIoU(output, mask)
 
     # Adjust metrics to get average loss and accuracy per batch 
-    seg_train_loss = seg_train_loss / len(dataloader)
-    seg_train_acc = seg_train_acc / len(dataloader)
-    seg_train_mIoU = seg_train_mIoU / len(dataloader)
+    seg_train_loss = seg_train_loss / len(source_dataloader)
+    seg_train_acc = seg_train_acc / len(source_dataloader)
+    seg_train_mIoU = seg_train_mIoU / len(source_dataloader)
 
     return seg_train_loss, seg_train_acc, seg_train_mIoU
 
@@ -191,15 +215,20 @@ def seg_val_step(seg_model: torch.nn.Module,
     return val_loss, val_acc, val_mIoU
 
 def seg_train(seg_model: torch.nn.Module, 
+          disc_model: torch.nn.Module,  # ADDED: domain discriminator model
           train_dataloader: torch.utils.data.DataLoader, 
           val_dataloader: torch.utils.data.DataLoader, 
           seg_optimizer: torch.optim.Optimizer,
+          disc_optimizer: torch.optim.Optimizer,  # ADDED: domain discriminator optimizer
           seg_loss_fn: torch.nn.Module,
+          disc_loss_fn: torch.nn.Module,  # ADDED: domain discriminator loss function
           epochs: int,
           device: torch.device, 
+          lambda_adv: float,  # ADDED: lambda_adv parameter to control adversarial loss weight
           writer: torch.utils.tensorboard.writer.SummaryWriter, # new parameter to take in a writer
           target_dir: str,
-          seg_model_name: str
+          seg_model_name: str,
+          target_dataloader: torch.utils.data.DataLoader = None  # ADDED: Set default value to None
           ) -> Dict[str, List]:
 
     # Create empty results dictionary
@@ -218,10 +247,15 @@ def seg_train(seg_model: torch.nn.Module,
     for epoch in range(epochs):
         if not done:
             train_loss, train_acc, train_mIoU = seg_train_step(seg_model=seg_model,
-                                            dataloader=train_dataloader,
+                                            disc_model=disc_model,  # ADDED: domain discriminator model
+                                            source_dataloader=train_dataloader,
+                                            target_dataloader=target_dataloader,
                                             seg_loss_fn=seg_loss_fn,
+                                            disc_loss_fn=disc_loss_fn,  # ADDED: domain discriminator loss function
                                             seg_optimizer=seg_optimizer,
-                                            device=device)
+                                            disc_optimizer=disc_optimizer,  # ADDED: domain discriminator optimizer
+                                            device=device,
+                                            lambda_adv=lambda_adv)  # ADDED: lambda_adv parameter
             val_loss, val_acc, val_mIoU = seg_val_step(seg_model=seg_model,
                                             dataloader=val_dataloader,
                                             seg_loss_fn=seg_loss_fn,
@@ -247,60 +281,57 @@ def seg_train(seg_model: torch.nn.Module,
     return results
 
 
-def discriminator_train_step(seg_model: torch.nn.Module,
-                             disc_model: torch.nn.Module,
-                             dataloader: torch.utils.data.DataLoader,
-                             disc_loss_fn: torch.nn.Module,
-                             disc_optimizer: torch.optim.Optimizer,
-                             device: torch.device,
-                             lambda_adv: float) -> float:
-
-    # Put both models in train mode
-    seg_model.train()
-    disc_model.train()
-
-    # Setup discriminator train loss value
-    disc_train_loss = 0
-
-    # Loop through data loader data batches
-    for i, data in enumerate(tqdm(dataloader)):
-        # Send data to target device
-        image_tiles, _ = data
-        image = image_tiles.to(device)
-
-        # 1. Forward pass through the segmentation model
-        output = seg_model(image)
-
-        # 2. Compute the domain discriminator predictions
-        disc_output = disc_model(output.detach())
-
-        # 3. Compute the domain discriminator loss
-        disc_loss = disc_loss_fn(disc_output, torch.ones(disc_output.size()).to(device) * lambda_adv)
-
-        # 4. Optimizer zero grad
-        disc_optimizer.zero_grad()
-
-        # 5. Loss backward
-        disc_loss.backward()
-
-        # 6. Optimizer step
-        disc_optimizer.step()
-
-        # Calculate and accumulate loss
-        disc_train_loss += disc_loss.item()
-
-    # Adjust loss to get average loss per batch
-    disc_train_loss = disc_train_loss / len(dataloader)
-
-    return disc_train_loss
 
 
 
 
 
+# def discriminator_train_step(seg_model: torch.nn.Module,
+#                              disc_model: torch.nn.Module,
+#                              dataloader: torch.utils.data.DataLoader,
+#                              disc_loss_fn: torch.nn.Module,
+#                              disc_optimizer: torch.optim.Optimizer,
+#                              device: torch.device,
+#                              lambda_adv: float) -> float:
 
+#     # Put both models in train mode
+#     seg_model.train()
+#     disc_model.train()
 
+#     # Setup discriminator train loss value
+#     disc_train_loss = 0
 
+#     # Loop through data loader data batches
+#     for i, data in enumerate(tqdm(dataloader)):
+#         # Send data to target device
+#         image_tiles, _ = data
+#         image = image_tiles.to(device)
+
+#         # 1. Forward pass through the segmentation model
+#         output = seg_model(image)
+
+#         # 2. Compute the domain discriminator predictions
+#         disc_output = disc_model(output.detach())
+
+#         # 3. Compute the domain discriminator loss
+#         disc_loss = disc_loss_fn(disc_output, torch.ones(disc_output.size()).to(device) * lambda_adv)
+
+#         # 4. Optimizer zero grad
+#         disc_optimizer.zero_grad()
+
+#         # 5. Loss backward
+#         disc_loss.backward()
+
+#         # 6. Optimizer step
+#         disc_optimizer.step()
+
+#         # Calculate and accumulate loss
+#         disc_train_loss += disc_loss.item()
+
+#     # Adjust loss to get average loss per batch
+#     disc_train_loss = disc_train_loss / len(dataloader)
+
+#     return disc_train_loss
 
 
 
@@ -326,10 +357,7 @@ def discriminator_train_step(seg_model: torch.nn.Module,
 # def adv_train_step(seg_model: torch.nn.Module, 
 #                    disc_model: torch.nn.Module,
 #                dataloader: torch.utils.data.DataLoader, 
-#                seg_loss_fn: torch.nn.Module, 
-#                disc_loss_fn: torch.nn.Module,
-#                seg_optimizer: torch.optim.Optimizer,
-#                disc_optimizer: torch.optim.Optimizer,
+#                seg_loss_fn: torch.nn.Module,Here is the training code for the semantic segmentation network. Adjust the code to accommodate Optimizer,
 #                device: torch.device) -> Tuple[float, float]:
     
 #     # Put model in train mode
